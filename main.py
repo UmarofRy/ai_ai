@@ -3,9 +3,12 @@ Full Telethon userbot with:
 - Admin-only commands (from your account ID)
 - Per-user modes: normal | rough | polite | off
 - Offensive message moderation (delete other users' offending messages)
-- Incoming message handling with human-like delays and formatted replies
-- /clear command with 5..0 countdown that then deletes the entire chat history
-- Console logging for actions
+- Pattern-based and fallback automatic replies
+- /clear command with countdown
+- /auto "message" * number  -> send given message number times with incremental percentage suffix (001%, 002%, ...)
+- /time seconds            -> show a live progress bar (single editable message); when done: delete chat history and block the peer (if applicable)
+- Logging to console
+- Message editing handling
 
 USAGE:
 - Replace API_ID, API_HASH, PHONE_NUMBER with your credentials if needed.
@@ -16,8 +19,7 @@ USAGE:
 import asyncio
 import re
 import random
-from telethon import TelegramClient, events, errors
-from telethon.tl.types import PeerUser
+from telethon import TelegramClient, events, errors, functions, types
 
 # -------------------------
 # === CONFIGURATION ===
@@ -107,7 +109,8 @@ RESPONSES = {
     r"(?i).*samir|Samir.*": "axaxaxa makaron kalla🍝💀",
     r"(?i).*Akbar|akbar.*": "arooo qite qite bomj vodka🍸💀",
     r"(?i).*soli|Soliha.*": "dilshodni kal rapunseli👸💀",
-    r"(?i).*xy?|xy.*": "da nx qando chundin xy pilot👸💀"
+    r"(?i).*xy?|xy.*": "da nx qando chundin xy pilot👸💀",
+    r"(?i).*Alyo?|H.*": "nma👸💀"
 }
 
 OFFENSIVE_PATTERNS = [
@@ -160,44 +163,25 @@ ROUGH_REPLIES = [
 
 POLITE_REPLIES = [
     "Rahmat, hurmat bilan yozing 😊",
-
-"Men tinglayapman 🌸",
-
-"Muloyimroq gapiring 🙏",
-
-"Rahmat, davom eting 🌼",
-
-"Yoqimli suhbat 🤍",
-
-"Samimiy yozing 🌿",
-
-"Gaplaringizni qadrlayman ✨",
-
-"Muloqot chiroyli 🌸",
-
-"Rahmat, tushundim 🕊️",
-
-"Do‘stona davom etamiz 🍀",
-
-"Hurmatli so‘zlar 🌟",
-
-"Mehribon ohangda 🌷",
-
-"Sizni tinglash yaxshi 🤍",
-
-"Qadrli so‘zlar ✨",
-
-"Rahmat xabaringiz uchun 🙏",
-
-"Yaxshi kayfiyat 🌸",
-
-"Samimiyatni qadrlayman 🌼",
-
-"Ajoyib suhbat 🌺",
-
-"Har bir so‘z qimmatli 💫",
-
-"Rahmat, davom eting 🌟"
+    "Men tinglayapman 🌸",
+    "Muloyimroq gapiring 🙏",
+    "Rahmat, davom eting 🌼",
+    "Yoqimli suhbat 🤍",
+    "Samimiy yozing 🌿",
+    "Gaplaringizni qadrlayman ✨",
+    "Muloqot chiroyli 🌸",
+    "Rahmat, tushundim 🕊️",
+    "Do‘stona davom etamiz 🍀",
+    "Hurmatli so‘zlar 🌟",
+    "Mehribon ohangda 🌷",
+    "Sizni tinglash yaxshi 🤍",
+    "Qadrli so‘zlar ✨",
+    "Rahmat xabaringiz uchun 🙏",
+    "Yaxshi kayfiyat 🌸",
+    "Samimiyatni qadrlayman 🌼",
+    "Ajoyib suhbat 🌺",
+    "Har bir so‘z qimmatli 💫",
+    "Rahmat, davom eting 🌟"
 ]
 
 # -------------------------
@@ -210,20 +194,19 @@ ACTIVE_MODES = {}  # in-memory; not persisted. default = "off"
 # === UTILITIES ===
 # -------------------------
 def format_reply(text: str) -> str:
-    decorations = [# Soft / Aesthetic
-    "💬", "🌿", "🫧", "🕊", "🫶", "🫀", "😇",
-    "✨", "🌸", "🌈", "🍓", "🌷", "🌹", "🌺",
-    "🌼", "🌻", "🌊", "🍃", "🪷", "💐", "🍄",
-    
-    # Sigma / Aurali / Moai
-    "🗿", "💀", "🧠", "💎", "⭐️", "🌙", "☀️",
-    "🕯", "🎶", "🧿", "🔥", "✅", "😌", "🤍",
-    
-    # Saturn / Space vibes
-    "🪐", "🌟", "🌌", "🚀", "🌠", "🌑", "🌙",
-    
-    # Rabbit / Cute
-    "🐇", "🐰", "🥕", "🧸", "🎈", "🎉", "🥰",]
+    decorations = [
+        # Soft / Aesthetic
+        "💬", "🌿", "🫧", "🕊", "🫶", "🫀", "😇",
+        "✨", "🌸", "🌈", "🍓", "🌷", "🌹", "🌺",
+        "🌼", "🌻", "🌊", "🍃", "🪷", "💐", "🍄",
+        # Sigma / Aurali / Moai
+        "🗿", "💀", "🧠", "💎", "⭐️", "🌙", "☀️",
+        "🕯", "🎶", "🧿", "🔥", "✅", "😌", "🤍",
+        # Saturn / Space vibes
+        "🪐", "🌟", "🌌", "🚀", "🌠", "🌑", "🌙",
+        # Rabbit / Cute
+        "🐇", "🐰", "🥕", "🧸", "🎈", "🎉", "🥰",
+    ]
     return f"{random.choice(decorations)} {text} {random.choice(decorations)}"
 
 def is_offensive(text: str) -> bool:
@@ -245,6 +228,12 @@ client = TelegramClient('autoreply_session', API_ID, API_HASH)
 ADMIN_CMD_RE = re.compile(r"^/(start|stop|rough|polite)\s+(@?[A-Za-z0-9_]+)$", re.I)
 CLEAR_CMD_RE = re.compile(r"^/clear\s*$", re.I)
 
+# New admin-only command regexes:
+# /auto "message" * number
+AUTO_CMD_RE = re.compile(r'^/auto\s+(?:"([^"]+)"|\'([^\']+)\')\s*\*\s*(\d+)\s*$', re.I | re.DOTALL)
+# /time seconds
+TIME_CMD_RE = re.compile(r'^/time\s+(\d+)\s*$', re.I)
+
 # -------------------------
 # === ADMIN COMMAND HANDLER ===
 # -------------------------
@@ -252,7 +241,9 @@ CLEAR_CMD_RE = re.compile(r"^/clear\s*$", re.I)
 async def admin_commands(event):
     """
     Handle admin commands sent by the admin (you). Commands only accepted if the sender's id == ADMIN_ID.
-    Works when you send them from Saved Messages or any private chat (outgoing messages).
+    Works when you send them in Saved Messages or any private chat (outgoing messages).
+
+    This handler includes the new /auto and /time admin commands.
     """
     try:
         # ensure this message is from the admin account
@@ -285,11 +276,9 @@ async def admin_commands(event):
         print(f"[ADMIN] Attempting to delete all messages in chat {chat} ...")
         try:
             # Collect message ids in batches to delete (we'll delete in chunks of 100)
-            # Using client.iter_messages to retrieve all messages
             ids_batch = []
             batch_size = 100
             async for msg in client.iter_messages(chat, limit=None):
-                # msg.id is int
                 ids_batch.append(msg.id)
                 if len(ids_batch) >= batch_size:
                     try:
@@ -325,6 +314,141 @@ async def admin_commands(event):
             except Exception:
                 pass
 
+        return
+
+    # New: /auto command
+    m_auto = AUTO_CMD_RE.match(text_stripped)
+    if m_auto:
+        # Parse quoted message and number
+        msg_text = m_auto.group(1) or m_auto.group(2) or ""
+        count = int(m_auto.group(3) or 0)
+        # Safety cap to avoid accidental huge spam (adjustable)
+        MAX_COUNT = 500
+        if count <= 0:
+            await event.reply(format_reply("⚠️ Iltimos, nusxalash sonini musbat butun son sifatida kiriting."))
+            return
+        if count > MAX_COUNT:
+            await event.reply(format_reply(f"⚠️ So'rov juda katta (>{MAX_COUNT}). Iltimos, kichikroq son kiriting."))
+            print(f"[ADMIN] /auto refused: requested {count} > {MAX_COUNT}")
+            return
+
+        chat = event.chat_id
+        print(f"[ADMIN] /auto triggered by admin in chat {chat}: sending {count} copies of message: {repr(msg_text)}")
+        try:
+            for i in range(1, count + 1):
+                suffix = f"{i:03d}%"
+                send_text = f"{msg_text} {suffix}"
+                # slight human delay per message
+                await human_delay(0.2, 1.0)
+                await client.send_message(chat, send_text)
+                print(f"[ADMIN][AUTO] Sent ({i}/{count}) -> {send_text}")
+            await event.reply(format_reply(f"Sucsesfull✅ Boshliq @umarov_py"))
+            print(f"[ADMIN] /auto completed in chat {chat}")
+        except Exception as e:
+            print(f"[ERROR] /auto failed in chat {chat}: {e}")
+            try:
+                await event.reply(format_reply(f"⚠️ /auto bajarishda xato: {e}"))
+            except Exception:
+                pass
+        return
+
+    # New: /time command
+    m_time = TIME_CMD_RE.match(text_stripped)
+    if m_time:
+        seconds = int(m_time.group(1))
+        if seconds <= 0:
+            await event.reply(format_reply("⚠️ Iltimos, musbat son kiriting."))
+            return
+
+        chat = event.chat_id
+        me = await client.get_me()
+        print(f"[ADMIN] /time triggered by admin in chat {chat}: timer={seconds}s")
+
+        # Prepare progress message
+        try:
+            progress_msg = await event.reply(format_reply(f"⏳ Boshlanmoqda... 0%"))
+            bar_length = 20  # length of visual bar
+            interval = 1.0  # update every 1 second
+            steps = max(1, int(seconds / interval))
+            # We'll update per-second to keep it simple and human-like
+            for elapsed in range(1, seconds + 1):
+                pct = int((elapsed / seconds) * 100)
+                filled = int((pct / 100) * bar_length)
+                bar = "█" * filled + "—" * (bar_length - filled)
+                new_text = format_reply(f"⏳ {pct}% |{bar}| {elapsed}/{seconds}s")
+                # human-like pause before edit
+                await asyncio.sleep(0.8 + random.uniform(0.0, 0.4))
+                try:
+                    await progress_msg.edit(new_text)
+                except Exception as ee:
+                    # as fallback, try editing by id
+                    try:
+                        await client.edit_message(chat, progress_msg.id, new_text)
+                    except Exception as eee:
+                        print(f"[WARN] Could not edit progress message: {eee} / {eee}")
+                print(f"[ADMIN][TIMER] {pct}% ({elapsed}/{seconds}s) in chat {chat}")
+
+            # Finalize at 100%
+            final_text = format_reply("✅ 100% - vaqti tugadi. Sayonara")
+            try:
+                await progress_msg.edit(final_text)
+            except Exception:
+                try:
+                    await client.edit_message(chat, progress_msg.id, final_text)
+                except Exception:
+                    pass
+            await asyncio.sleep(0.8)
+
+            # Now delete all messages in this chat (same logic as /clear)
+            print(f"[ADMIN] /time completed: attempting to delete all messages in chat {chat} ...")
+            try:
+                ids_batch = []
+                batch_size = 100
+                async for msg in client.iter_messages(chat, limit=None):
+                    ids_batch.append(msg.id)
+                    if len(ids_batch) >= batch_size:
+                        try:
+                            await client.delete_messages(chat, ids_batch, revoke=True)
+                            print(f"[ADMIN] Deleted batch of {len(ids_batch)} messages in chat {chat}")
+                        except Exception as de:
+                            print(f"[WARN] Could not delete batch: {de}")
+                        ids_batch = []
+                if ids_batch:
+                    try:
+                        await client.delete_messages(chat, ids_batch, revoke=True)
+                        print(f"[ADMIN] Deleted final batch of {len(ids_batch)} messages in chat {chat}")
+                    except Exception as de:
+                        print(f"[WARN] Could not delete final batch: {de}")
+                # Attempt to delete dialog too
+                try:
+                    await client.delete_dialog(chat)
+                    print(f"[ADMIN] Deleted dialog for chat {chat}")
+                except Exception as de:
+                    print(f"[WARN] delete_dialog failed (non-critical): {de}")
+
+            except Exception as e:
+                print(f"[ERROR] Error while clearing chat {chat} after /time: {e}")
+
+            # Attempt to block the peer if it's a user and not Saved Messages (you)
+            try:
+                entity = await client.get_entity(chat)
+                if isinstance(entity, types.User) and getattr(entity, 'id', None) != me.id:
+                    # Block the user
+                    await client(functions.contacts.BlockRequest(id=entity.id))
+                    print(f"[ADMIN] Blocked user id={entity.id} (@{getattr(entity, 'username', None)}) after /time")
+                else:
+                    print(f"[ADMIN] Not blocking: entity is not a user or is self (chat={chat})")
+            except Exception as e:
+                print(f"[WARN] Could not block entity for chat {chat}: {e}")
+
+            # Final log + no further reply (chat cleared)
+            print(f"[ADMIN] /time sequence finished for chat {chat}")
+        except Exception as e:
+            print(f"[ERROR] /time failed in chat {chat}: {e}")
+            try:
+                await event.reply(format_reply(f"⚠️ /time buyruqda xato yuz berdi: {e}"))
+            except Exception:
+                pass
         return
 
     # Admin mode commands (/start, /stop, /rough, /polite)
