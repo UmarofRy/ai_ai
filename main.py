@@ -323,7 +323,7 @@ async def admin_commands(event):
         msg_text = m_auto.group(1) or m_auto.group(2) or ""
         count = int(m_auto.group(3) or 0)
         # Safety cap to avoid accidental huge spam (adjustable)
-        MAX_COUNT = 500
+        MAX_COUNT = 1000000000000000000000000000000000000000000000000000000000000000000000000000000
         if count <= 0:
             await event.reply(format_reply("⚠️ Iltimos, nusxalash sonini musbat butun son sifatida kiriting."))
             return
@@ -348,7 +348,7 @@ async def admin_commands(event):
             print(f"[ERROR] /auto failed in chat {chat}: {e}")
             try:
                 await event.reply(format_reply(f"⚠️ /auto bajarishda xato: {e}"))
-            except Exception:
+            except Exception:   
                 pass
         return
 
