@@ -1,1 +1,9 @@
-telethon>=1.36.0
+telethon>=1.34.0
+osu
+magictext
+qr
+top20
+lyrics
+picsaver
+weather
+chatgpt
